@@ -2,6 +2,7 @@
 #define WORLD
 
 #include "program.cpp"
+#include "data.cpp"
 
 long MAX =  std::numeric_limits<uint32_t>::max();
 
@@ -11,6 +12,7 @@ struct SettingsStruct{
     double crossover_probability = 0.3;
     double mutation_probability = 0.3;
     double size_punishment_factor = 0.5;
+    bool track_data = true;
 };
 
 class World{
@@ -19,6 +21,7 @@ public:
     std::vector<Program*> programs_B;
     std::vector<double> program_errors;
     SettingsStruct* settings;
+    Data data;
     
     World(SettingsStruct* _s): settings(_s){}
     ~World(){
@@ -60,7 +63,10 @@ public:
             
             std::vector<uint32_t> registers {(uint32_t)(rand() % (MAX + 1)), (uint32_t)(rand() % (MAX + 1)), (uint32_t)(rand() % (MAX + 1)), (uint32_t)(rand() % (MAX + 1))};
             uint32_t correct_answer = calculate_correct_answer(registers.at(0), registers.at(1));
-
+            if (settings->track_data){
+                std::vector<uint32_t> registers_2 = registers;  // copy!
+                get_non_effective_prop(&registers_2, programs_A.at(i), programs_B.at(i));
+            }
             programs_A.at(i)->execute_program(&registers);
 
             // set inputs to outputs and scramble outputs 
@@ -75,8 +81,185 @@ public:
             correct_answer ^= registers.at(3);
             int mismatching_bits = std::bitset<32>(correct_answer).count();
             int prog_length = programs_A.at(i)->lines.size() + programs_B.at(i)->lines.size();
-            program_errors.at(i) =  mismatching_bits + settings->size_punishment_factor * prog_length;
+            double error = mismatching_bits + settings->size_punishment_factor * prog_length;
+            program_errors.at(i) = error;
+
+            if (settings->track_data) data.add_error_value(error);
         }
+    }
+
+    void get_non_effective_prop(std::vector<uint32_t> * registers, Program * program_A, Program * program_B){
+        // from the end of the program to the start, check--is this structurally relevant?
+        std::vector<int> prog_A_ef_struct_indices;
+        std::vector<int> prog_B_ef_struct_indices;
+
+        // check if lines do anything
+        int structurally_ineffective = 0;
+
+        // first in prog B: 
+        bool output_1_active = false; // are these registers relevant to the answer in o2?
+        bool input_1_active = false;
+        bool input_2_active = false;
+        bool output_2_lock = false; // "lock" being true means assignment doesn't matter, it's overwritten later
+        bool output_1_lock = false;
+        for (int i = program_B->lines.size() - 1; i >=0; i --) {
+            Line *line =  program_B->lines.at(i);
+            
+            if(line->nodes.at(0)->subtype == OUTPUT_1 && !output_1_active) {
+                // writing to output 1, but output 1 is not used elsewhere
+                structurally_ineffective++;
+            }
+            else if(line->nodes.at(0)->subtype == OUTPUT_2 && output_2_lock){
+                // writing to output 2, but overwritten later
+                structurally_ineffective++;
+            }
+            else if(line->nodes.at(0)->subtype == OUTPUT_1 && output_1_lock){
+                // writing to output 1, but overwritten later
+                structurally_ineffective++;
+            }
+            else if(line->nodes.at(0)->subtype == OUTPUT_1 && output_1_active && !output_1_lock) {
+                // meaningful! 
+                prog_B_ef_struct_indices.push_back(i);
+                bool output_1_lock_internal = true;
+                for(int j = 1; j < line->nodes.size(); j++){
+                    Node* node = line->nodes.at(j);
+                    if(node->subtype == OUTPUT_1) output_1_active = true;
+                    if(node->subtype == INPUT_1) input_1_active = true;
+                    if(node->subtype == INPUT_2) input_2_active = true;
+
+
+                    // if output 1 is part of the assignment, then output 1 is not locked
+                    // previous output 1 assignment matters
+                    if(node->subtype == OUTPUT_1) {
+                        output_1_lock_internal = false;
+                    }
+
+                    // if output 2 is part of the assignment, then output 2 is not locked
+                    // previous output 2 assignment matters (output 1 is active)
+                    if(node->subtype == OUTPUT_2) {
+                        output_2_lock = false;
+                    }
+                }
+                output_1_lock = output_1_lock_internal;
+            }
+            else if(line->nodes.at(0)->subtype == OUTPUT_2 && !output_2_lock) {
+                // meaningful! 
+                prog_B_ef_struct_indices.push_back(i);
+                bool output_2_lock_internal = true;
+                for(int j = 1; j < line->nodes.size(); j++){
+                    Node* node = line->nodes.at(j);
+                    if(node->subtype == OUTPUT_1) output_1_active = true;
+                    if(node->subtype == INPUT_1) input_1_active = true;
+                    if(node->subtype == INPUT_2) input_2_active = true;
+
+                    // if output 2 is part of the assignment, then output 2 is not locked
+                    // previous output 2 assignment matters
+                    if(node->subtype == OUTPUT_2) {
+                        output_2_lock_internal = false;
+                    }
+
+                    // if output 1 is part of the assignment, then output 1 is not locked
+                    // previous output 1 assignment matters
+                    if(node->subtype == OUTPUT_1) {
+                        output_1_lock = false;
+                    }
+                }
+                output_2_lock = output_2_lock_internal;
+            }
+        }
+
+        // next in prog A:
+        output_1_lock = false; // "lock" being true means assignment doesn't matter, it's overwritten later
+        output_2_lock = false;
+        for (int i = program_A->lines.size() - 1; i >=0; i --) {
+            Line *line =  program_A->lines.at(i);
+            if(line->nodes.at(0)->subtype == OUTPUT_1 && !input_1_active) {
+                // writing to output 1 in A, but input 1 is not used in B
+                structurally_ineffective++;
+            }
+            else if(line->nodes.at(0)->subtype == OUTPUT_2 && !input_2_active) {
+                // writing to output 2 in A, but input 2 is not used in B
+                structurally_ineffective++;
+            }
+             else if(line->nodes.at(0)->subtype == OUTPUT_2 && output_2_lock){
+                // writing to output 2, but overwritten later
+                structurally_ineffective++;
+            }
+            else if(line->nodes.at(0)->subtype == OUTPUT_1 && output_1_lock){
+                // writing to output 1, but overwritten later
+                structurally_ineffective++;
+            }
+            else if(line->nodes.at(0)->subtype == OUTPUT_1 && !output_1_lock) {
+                // meaningful!
+                prog_A_ef_struct_indices.push_back(i);
+                bool output_1_lock_internal = true;
+                for(int j = 1; j < line->nodes.size(); j++){
+                    Node* node = line->nodes.at(j);
+
+                    // if output 1 is part of the assignment, then output 1 is not locked
+                    // previous output 1 assignment matters
+                    if(node->subtype == OUTPUT_1) {
+                        output_1_lock_internal = false;
+                    }
+
+                    // if output 2 is part of the assignment, then output 2 is not locked
+                    // previous output 2 assignment matters (output 1 is active)
+                    if(node->subtype == OUTPUT_2) {
+                        output_2_lock = false;
+                    }
+                }
+                output_1_lock = output_1_lock_internal;
+            }
+            else if(line->nodes.at(0)->subtype == OUTPUT_2 && !output_2_lock) {
+                // meaningful!
+                prog_A_ef_struct_indices.push_back(i);
+                bool output_2_lock_internal = true;
+                for(int j = 1; j < line->nodes.size(); j++){
+                    Node* node = line->nodes.at(j);
+                    // if output 2 is part of the assignment, then output 2 is not locked
+                    // previous output 2 assignment matters
+                    if(node->subtype == OUTPUT_2) {
+                        output_2_lock_internal = false;
+                    }
+
+                    // if output 1 is part of the assignment, then output 1 is not locked
+                    // previous output 1 assignment matters
+                    if(node->subtype == OUTPUT_1) {
+                        output_1_lock = false;
+                    }
+                }
+                output_2_lock = output_2_lock_internal;
+            }
+        }
+
+        // run lines which theoretically contribute to output; check if they affect meaningful register contents
+        int semantically_ineffective = 0;
+       
+        for(int sef_i = prog_A_ef_struct_indices.size() - 1; sef_i >= 0; sef_i--){
+            Line * line = program_A->lines.at(prog_A_ef_struct_indices.at(sef_i));
+            uint32_t o1 = registers->at(2);
+            uint32_t o2 = registers->at(3);
+            line->execute_line(registers);
+            if(registers->at(2) == o1 && registers->at(3) == o2) semantically_ineffective++;
+        }
+
+        // set inputs to outputs and scramble outputs 
+        registers->at(0) = registers->at(2);
+        registers->at(1) = registers->at(3);
+        registers->at(2) = (uint32_t)(rand() % (MAX + 1));
+        registers->at(3) = (uint32_t)(rand() % (MAX + 1));
+        
+        for(int sef_i = prog_B_ef_struct_indices.size() - 1; sef_i >= 0; sef_i--){
+            Line* line = program_B->lines.at(prog_B_ef_struct_indices.at(sef_i));
+            uint32_t o1 = registers->at(2);
+            uint32_t o2 = registers->at(3);
+            line->execute_line(registers);
+            if(registers->at(2) == o1 && registers->at(3) == o2) semantically_ineffective++;
+        }
+        
+        double length = program_B->lines.size() + program_A->lines.size();
+        data.add_non_struct_ef_prop(structurally_ineffective / length);
+        data.add_non_sem_ef_prop((semantically_ineffective + structurally_ineffective) / length);
     }
 
     double get_min_error(){
@@ -169,6 +352,7 @@ public:
         programs_A = child_programs_A;
         programs_B = child_programs_B;
         calculate_pop_error();
+        if (settings->track_data) data.next_generation(settings->pop_size);
     }
 };
 
