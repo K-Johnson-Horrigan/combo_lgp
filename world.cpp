@@ -7,12 +7,16 @@
 long MAX =  std::numeric_limits<uint32_t>::max();
 
 struct SettingsStruct{
+    int seed = 923;
     int pop_size = 10;
     int starting_prog_size = 2;
     double crossover_probability = 0.3;
     double mutation_probability = 0.3;
     double size_punishment_factor = 0.5;
+    bool track_ineffective = false;
     bool track_data = true;
+    bool verbose = true;
+    int world_type = 0; // 0 is A/B, 1 is AB/AB, 2 is AB
 };
 
 class World{
@@ -23,9 +27,9 @@ public:
     SettingsStruct* settings;
     Data data;
     
-    World(SettingsStruct* _s): settings(_s){}
+    World(SettingsStruct* _s): settings(_s){data.track_ineffective = settings->track_ineffective;}
     ~World(){
-        if(programs_A.size() != 0 && programs_B.size() != 0){
+        if(programs_A.size() != 0){
             clear_program_populations();
         }
     }
@@ -33,7 +37,7 @@ public:
     void clear_program_populations(){
         for(int i = 0; i < settings->pop_size; i++){
             delete programs_A.at(i);
-            delete programs_B.at(i);
+            if(settings->world_type != 2) delete programs_B.at(i);
         }
         programs_A.clear();
         programs_B.clear();
@@ -41,14 +45,28 @@ public:
     
     void initialize_populations(){
         for(int i = 0; i < settings->pop_size; i++){
-            Program* prog_a = new Program(0);
-            prog_a->build_random_program(settings->starting_prog_size);
-            programs_A.push_back(prog_a);
-            
-            Program* prog_b = new Program(1);
-            prog_b->build_random_program(settings->starting_prog_size);
-            programs_B.push_back(prog_b);
-
+            if(settings->world_type == 0){
+                Program* prog_a = new Program(0);
+                prog_a->build_random_program(settings->starting_prog_size);
+                programs_A.push_back(prog_a);
+                
+                Program* prog_b = new Program(1);
+                prog_b->build_random_program(settings->starting_prog_size);
+                programs_B.push_back(prog_b);
+                
+            } else if(settings->world_type == 1){
+                Program* prog_a = new Program(2);
+                prog_a->build_random_program(settings->starting_prog_size);
+                programs_A.push_back(prog_a);
+                
+                Program* prog_b = new Program(2);
+                prog_b->build_random_program(settings->starting_prog_size);
+                programs_B.push_back(prog_b);
+            } else if(settings->world_type == 2){
+                Program* prog_a = new Program(2);
+                prog_a->build_random_program(settings->starting_prog_size);
+                programs_A.push_back(prog_a);
+            }
             program_errors.push_back(MAX);
         }
         calculate_pop_error();
@@ -63,28 +81,33 @@ public:
             
             std::vector<uint32_t> registers {(uint32_t)(rand() % (MAX + 1)), (uint32_t)(rand() % (MAX + 1)), (uint32_t)(rand() % (MAX + 1)), (uint32_t)(rand() % (MAX + 1))};
             uint32_t correct_answer = calculate_correct_answer(registers.at(0), registers.at(1));
-            if (settings->track_data){
+            if (settings->track_data && settings->track_ineffective){ // not used for world type 2
                 std::vector<uint32_t> registers_2 = registers;  // copy!
                 get_non_effective_prop(&registers_2, programs_A.at(i), programs_B.at(i));
             }
             programs_A.at(i)->execute_program(&registers);
 
             // set inputs to outputs and scramble outputs 
-            registers.at(0) = registers.at(2);
-            registers.at(1) = registers.at(3);
-            registers.at(2) = (uint32_t)(rand() % (MAX + 1));
-            registers.at(3) = (uint32_t)(rand() % (MAX + 1));
+            if(settings->world_type != 2){
+                registers.at(0) = registers.at(2);
+                registers.at(1) = registers.at(3);
+                registers.at(2) = (uint32_t)(rand() % (MAX + 1));
+                registers.at(3) = (uint32_t)(rand() % (MAX + 1));
 
-            programs_B.at(i)->execute_program(&registers);
+                programs_B.at(i)->execute_program(&registers);
+            }
 
             // originally program B was only going to have 1 output register; for coding simplicity it now has 2. The answer is expected in output 2
             correct_answer ^= registers.at(3);
             int mismatching_bits = std::bitset<32>(correct_answer).count();
-            int prog_length = programs_A.at(i)->lines.size() + programs_B.at(i)->lines.size();
+            int prog_A_length = programs_A.at(i)->lines.size(); 
+            int prog_length = prog_A_length; 
+            if(settings->world_type != 2) prog_length += programs_B.at(i)->lines.size();
+
             double error = mismatching_bits + settings->size_punishment_factor * prog_length;
             program_errors.at(i) = error;
 
-            if (settings->track_data) data.add_error_value(error);
+            if (settings->track_data) data.add_error_and_length_values(mismatching_bits, error, prog_length, prog_A_length);
         }
     }
 
@@ -270,8 +293,10 @@ public:
         int best_i = std::distance(std::begin(program_errors), std::min_element(program_errors.begin(), program_errors.end()));
         std::cout << "** PROGRAM A **" << std::endl;
         programs_A.at(best_i)->print_program();
-        std::cout << "** PROGRAM B **" << std::endl;
-        programs_B.at(best_i)->print_program();
+        if(settings->world_type != 2){
+            std::cout << "** PROGRAM B **" << std::endl;
+            programs_B.at(best_i)->print_program();
+        }
     }
 
 
@@ -327,30 +352,33 @@ public:
             // create child objects
             Program* prog_a_child_1 = new Program(programs_A.at(parent_1_pos));
             Program* prog_a_child_2 = new Program(programs_A.at(parent_2_pos));
-            Program* prog_b_child_1 = new Program(programs_B.at(parent_1_pos));
-            Program* prog_b_child_2 = new Program(programs_B.at(parent_2_pos));
-
+            Program* prog_b_child_1;
+            Program* prog_b_child_2;
+            if(settings->world_type != 2){
+                prog_b_child_1 = new Program(programs_B.at(parent_1_pos));
+                prog_b_child_2 = new Program(programs_B.at(parent_2_pos));
+            }
             // cross children 
             if(((double)rand()/(double)RAND_MAX) < settings->crossover_probability){
                 cross_programs(prog_a_child_1, prog_a_child_2);
-                cross_programs(prog_b_child_1, prog_b_child_2);
+                if(settings->world_type != 2) cross_programs(prog_b_child_1, prog_b_child_2);
             }
 
             // mutate children 
             if(((double)rand()/(double)RAND_MAX) < settings->mutation_probability){
                 prog_a_child_1->mutate();
-                prog_b_child_1->mutate();
+                if(settings->world_type != 2) prog_b_child_1->mutate();
                 prog_a_child_2->mutate();
-                prog_b_child_2->mutate();
+                if(settings->world_type != 2) prog_b_child_2->mutate();
             }
             child_programs_A.push_back(prog_a_child_1);
             child_programs_A.push_back(prog_a_child_2);
-            child_programs_B.push_back(prog_b_child_1);
-            child_programs_B.push_back(prog_b_child_2);
+            if(settings->world_type != 2) child_programs_B.push_back(prog_b_child_1);
+            if(settings->world_type != 2) child_programs_B.push_back(prog_b_child_2);
         }
         clear_program_populations();
         programs_A = child_programs_A;
-        programs_B = child_programs_B;
+        if(settings->world_type != 2) programs_B = child_programs_B;
         calculate_pop_error();
         if (settings->track_data) data.next_generation(settings->pop_size);
     }

@@ -13,7 +13,7 @@
 #include <iostream>
 #include <vector>
 
-enum SubNodeType {
+enum NodeType {
     INPUT_1 = 0,
     INPUT_2,
     OUTPUT_1,
@@ -69,7 +69,12 @@ class Line{
             }
             else{ // OP registers
                 nodes.emplace_back(new Node(rand() % 4));
-                nodes.emplace_back(new Node(program_type + 5));
+                if(program_type <= 1){
+                    nodes.emplace_back(new Node(program_type + 5));
+                } else if(program_type == 2){
+                    if((rand() % 2) == 0) nodes.emplace_back(new Node(AND));
+                    else nodes.emplace_back(new Node(OR));
+                }
                 nodes.emplace_back(new Node(rand() % 4));
             } 
         }
@@ -93,8 +98,13 @@ class Line{
             else if(node->subtype == NOT){
                 Node *reg = nodes.at(2);
                 nodes.at(2) = nodes.at(1);
-                if(program_type == 0) nodes.at(2)->subtype = AND;
-                else nodes.at(2)->subtype = OR;
+                if(program_type <= 1){
+                    if(program_type == 0) nodes.at(2)->subtype = AND;
+                    else nodes.at(2)->subtype = OR;
+                } else if(program_type == 2){
+                    if((rand() % 2) == 0) nodes.at(2)->subtype = AND;
+                    else nodes.at(2)->subtype = OR;
+                }
                 nodes.at(1) = reg;
                 nodes.emplace_back(new Node(rand() % 4));
             }
@@ -120,12 +130,26 @@ class Line{
                 registers->at(nodes.at(0)->subtype) = ~ registers->at(nodes.at(2)->subtype);
             }
             else if(nodes.size() == 4){
-                registers->at(nodes.at(0)->subtype) = (program_type == 0) ?
-                    registers->at(nodes.at(1)->subtype) & registers->at(nodes.at(3)->subtype) :
-                    registers->at(nodes.at(1)->subtype) | registers->at(nodes.at(3)->subtype);
+                if(program_type <= 1){
+                    registers->at(nodes.at(0)->subtype) = (program_type == 0) ?
+                        registers->at(nodes.at(1)->subtype) & registers->at(nodes.at(3)->subtype) :
+                        registers->at(nodes.at(1)->subtype) | registers->at(nodes.at(3)->subtype);
+                } else if(program_type == 2){
+                    if(nodes.at(2)->subtype == AND){
+                        registers->at(nodes.at(0)->subtype) = (registers->at(nodes.at(1)->subtype) & registers->at(nodes.at(3)->subtype));
+                    }
+                    else if(nodes.at(2)->subtype == OR){
+                        registers->at(nodes.at(0)->subtype) = (registers->at(nodes.at(1)->subtype) | registers->at(nodes.at(3)->subtype));
+                    }
+                    else{
+                        std::cout << "ERROR: improper command type" << std::endl;
+                        exit(0);
+                    }
+                }
             }
             else{
                 std::cout << "ERROR: too many nodes" << std::endl;
+                exit(0);
             }
         }
 };
@@ -136,7 +160,7 @@ class Program{
         int program_type = 0;
         std::vector<Line*> lines;
 
-        Program(int _pt = 0):   program_type(_pt){}
+        Program(int _pt = 0):   program_type(_pt  ){}
         ~Program(){clear();   }
         Program(const Program* other): program_type(other->program_type) {
           for(int i = 0; i < other->lines.size(); i ++ ){
