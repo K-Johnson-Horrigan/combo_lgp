@@ -9,6 +9,7 @@ long MAX =  std::numeric_limits<uint32_t>::max();
 struct SettingsStruct{
     int seed = 923;
     int pop_size = 10;
+    double trials = 1; 
     int starting_prog_size = 2;
     double crossover_probability = 0.3;
     double mutation_probability = 0.3;
@@ -78,36 +79,39 @@ public:
 
     void calculate_pop_error(){
         for(int i = 0; i < settings->pop_size; i++){
-            
-            std::vector<uint32_t> registers {(uint32_t)(rand() % (MAX + 1)), (uint32_t)(rand() % (MAX + 1)), (uint32_t)(rand() % (MAX + 1)), (uint32_t)(rand() % (MAX + 1))};
-            uint32_t correct_answer = calculate_correct_answer(registers.at(0), registers.at(1));
-            if (settings->track_data && settings->track_ineffective){ // not used for world type 2
-                std::vector<uint32_t> registers_2 = registers;  // copy!
-                get_non_effective_prop(&registers_2, programs_A.at(i), programs_B.at(i));
+            double mean_incorrect_bits = 0;
+            for(int trials = 0; trials < settings->trials; trials++){
+                std::vector<uint32_t> registers {(uint32_t)(rand() % (MAX + 1)), (uint32_t)(rand() % (MAX + 1)), (uint32_t)(rand() % (MAX + 1)), (uint32_t)(rand() % (MAX + 1))};
+                uint32_t correct_answer = calculate_correct_answer(registers.at(0), registers.at(1));
+                if (settings->track_data && settings->track_ineffective){ // not used for world type 2
+                    std::vector<uint32_t> registers_2 = registers;  // copy!
+                    get_non_effective_prop(&registers_2, programs_A.at(i), programs_B.at(i));
+                }
+                programs_A.at(i)->execute_program(&registers);
+
+                // set inputs to outputs and scramble outputs 
+                if(settings->world_type != 2){
+                    registers.at(0) = registers.at(2);
+                    registers.at(1) = registers.at(3);
+                    registers.at(2) = (uint32_t)(rand() % (MAX + 1));
+                    registers.at(3) = (uint32_t)(rand() % (MAX + 1));
+
+                    programs_B.at(i)->execute_program(&registers);
+                }
+
+                // originally program B was only going to have 1 output register; for coding simplicity it now has 2. The answer is expected in output 2
+                correct_answer ^= registers.at(3);
+                mean_incorrect_bits += std::bitset<32>(correct_answer).count();
             }
-            programs_A.at(i)->execute_program(&registers);
-
-            // set inputs to outputs and scramble outputs 
-            if(settings->world_type != 2){
-                registers.at(0) = registers.at(2);
-                registers.at(1) = registers.at(3);
-                registers.at(2) = (uint32_t)(rand() % (MAX + 1));
-                registers.at(3) = (uint32_t)(rand() % (MAX + 1));
-
-                programs_B.at(i)->execute_program(&registers);
-            }
-
-            // originally program B was only going to have 1 output register; for coding simplicity it now has 2. The answer is expected in output 2
-            correct_answer ^= registers.at(3);
-            int mismatching_bits = std::bitset<32>(correct_answer).count();
             int prog_A_length = programs_A.at(i)->lines.size(); 
             int prog_length = prog_A_length; 
             if(settings->world_type != 2) prog_length += programs_B.at(i)->lines.size();
 
-            double error = mismatching_bits + settings->size_punishment_factor * prog_length;
+            mean_incorrect_bits /= settings->trials;
+            double error = mean_incorrect_bits + settings->size_punishment_factor * prog_length;
             program_errors.at(i) = error;
 
-            if (settings->track_data) data.add_error_and_length_values(mismatching_bits, error, prog_length, prog_A_length);
+            if (settings->track_data) data.add_error_and_length_values(mean_incorrect_bits, error, prog_length, prog_A_length);
         }
     }
 

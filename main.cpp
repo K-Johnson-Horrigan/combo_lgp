@@ -21,6 +21,7 @@ int main(){
     s.mutation_probability = 0.3;
     s.size_punishment_factor = 0.1;
     s.track_data = 1;
+    s.trials = 1;
     s.track_ineffective = 0;
     s.verbose = 0; // print the best solution of each update if true
     s.world_type = 1;
@@ -34,10 +35,10 @@ int main(){
         if(_world_type == 2) s.starting_prog_size = 8;
         s.world_type = _world_type;
         
-        std::vector<double> param_list = {0.01, 0.05, 0.1, 0.5, 1, 5};
+        std::vector<double> param_list = {1, 2, 5, 10, 20, 50};
         for(int param_i = 0; param_i < param_list.size(); param_i++){
             std::cout << "world, param: " << _world_type << ", " << param_list.at(param_i) << std::endl;
-            s.size_punishment_factor = param_list.at(param_i);
+            s.trials = param_list.at(param_i);
 
             for(int rep_count = 0; rep_count < 20; rep_count ++){
                 s.seed = _seed;
@@ -62,12 +63,12 @@ int main(){
                     }
                 }
                 
-                std::string line_prefix_header = "test,seed,cross_prob,mut_prob,size_punishment,pop_size,world_type,";
-                std::string line_prefix = "punish_factor," + std::to_string(s.seed) + "," +  std::to_string(s.crossover_probability) + "," ;
+                std::string line_prefix_header = "test,seed,cross_prob,mut_prob,size_punishment,pop_size,world_type,trials,";
+                std::string line_prefix = "trials," + std::to_string(s.seed) + "," +  std::to_string(s.crossover_probability) + "," ;
                 line_prefix += std::to_string(s.mutation_probability) + "," +  std::to_string(s.size_punishment_factor) + "," ;
-                line_prefix += std::to_string(s.pop_size) + "," +  std::to_string(s.world_type) + "," ;
+                line_prefix += std::to_string(s.pop_size) + "," +  std::to_string(s.world_type) + ","  + std::to_string(s.trials) + ",";
 
-                std::string file_name = "data/seed_"+std::to_string(s.seed)+"_world_" + std::to_string(s.world_type) + "_punish_factor_" + std::to_string(s.crossover_probability) +"_data.csv";
+                std::string file_name = "data/seed_"+std::to_string(s.seed)+"_world_" + std::to_string(s.world_type) + "_trials_" + std::to_string(s.trials) +"_data.csv";
                 if(s.track_data) world->data.write_data(file_name, line_prefix_header, line_prefix);
                 
                 delete world;
